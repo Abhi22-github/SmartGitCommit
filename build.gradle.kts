@@ -7,6 +7,7 @@ plugins {
 group = "com.example"
 version = "1.0-SNAPSHOT"
 
+
 repositories {
     mavenCentral()
     intellijPlatform {
@@ -19,6 +20,10 @@ repositories {
 dependencies {
     intellijPlatform {
         create("IC", "2025.1.4.1")
+        // 'Git4Idea' provides the Git and VCS logic
+        bundledPlugin("Git4Idea")
+        // 'com.intellij.java' is often needed for UI and standard IDE components
+        bundledPlugin("com.intellij.java")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
 

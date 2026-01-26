@@ -2,6 +2,7 @@ package com.example.smartgitcommit
 
 
 import com.intellij.openapi.project.Project
+import kotlinx.html.emptyMap
 import java.io.File
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -114,7 +115,7 @@ object GitRunner {
         val output = runAndCapture(root, listOf("git", "status", "--porcelain"))
         return output.lines()
             .filter { it.isNotBlank() }
-            .map { it.substring(3) } // remove status prefix
+            .map { it.substring(2).trim() } // Standardized way to strip Git status prefixes
     }
 
     fun commitSelectedFiles(
@@ -124,21 +125,24 @@ object GitRunner {
         dateTime: LocalDateTime
     ) {
         val root = project.basePath ?: return
+        val formattedDate = dateTime.atZone(ZoneId.systemDefault()).toInstant().toString()
 
-        val formattedDate = dateTime
-            .atZone(ZoneId.systemDefault())
-            .toOffsetDateTime()
-            .toString()
-
-        // stage selected files
         files.forEach { absolutePath ->
-            val relativePath = File(root).toPath()
-                .relativize(File(absolutePath).toPath())
-                .toString()
+            // Git works best with relative paths from the repo root
+            val relativePath = File(root).toPath().relativize(File(absolutePath).toPath()).toString()
 
-            run(root, listOf("git", "add", relativePath))
+            val file = File(absolutePath)
+            if (file.exists()) {
+                // File exists on disk: Stage modification or new file
+                run(root, listOf("git", "add", relativePath))
+            } else {
+                // File does NOT exist: Stage the deletion
+                // --cached ensures it removes it from the index even if the file is gone
+                run(root, listOf("git", "rm", "--cached", "-r", "--ignore-unmatch", relativePath))
+            }
         }
-        // commit
+
+        // Execute commit with Author and Committer date overrides
         run(
             root,
             listOf("git", "commit", "-m", message),
@@ -154,30 +158,25 @@ object GitRunner {
         run(root, listOf("git", "push"))
     }
 
-
-
-    // ---------------- INTERNAL ----------------
-
-    private fun run(
-        dir: String,
-        command: List<String>,
-        env: Map<String, String> = emptyMap()
-    ) {
-        val pb = ProcessBuilder(command)
-            .directory(File(dir))
-
-        pb.environment().putAll(env)
-        pb.start().waitFor()
+    fun runAndCapture(dir: String, command: List<String>): String {
+        val pb = ProcessBuilder(command).directory(File(dir))
+        val process = pb.start()
+        val out = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        return out
     }
 
-    private fun runAndCapture(
-        dir: String,
-        command: List<String>
-    ): String {
-        val pb = ProcessBuilder(command)
-            .directory(File(dir))
+    private fun run(dir: String, command: List<String>, env: Map<String, String> = emptyMap()) {
+        val pb = ProcessBuilder(command).directory(File(dir))
+        pb.environment().putAll(env)
+        pb.redirectErrorStream(true)
 
         val process = pb.start()
-        return process.inputStream.bufferedReader().readText()
+        val output = process.inputStream.bufferedReader().readText()
+        val exitCode = process.waitFor()
+
+        if (exitCode != 0) {
+            throw Exception("Git Error: $output")
+        }
     }
 }
