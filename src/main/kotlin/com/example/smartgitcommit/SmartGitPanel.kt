@@ -313,17 +313,22 @@ class SmartGitPanel(
             .flatMap { it.selectedFiles() }
 
         project?.let { proj ->
-            if (selectedFiles.isNotEmpty())
-                GitRunner.commitSelectedFiles(proj, selectedFiles, message, dateTime, push)
-            else
-                GitRunner.commitAndPush(proj, message, dateTime, push)
+            if (selectedFiles.isNotEmpty()) {
+                GitRunner.commitSelectedFiles(proj, selectedFiles, message, dateTime)
+            } else {
+                GitRunner.commit(proj, message, dateTime)
+            }
 
-            // 🔥 FORCE VCS REFRESH
+            if (push) {
+                GitRunner.push(proj)
+            }
+
             VcsDirtyScopeManager.getInstance(proj).markEverythingDirty()
         }
 
         commitMessage.text = ""
     }
+
 
     private fun openFile(path: String) {
         val vf = LocalFileSystem.getInstance().findFileByPath(path)

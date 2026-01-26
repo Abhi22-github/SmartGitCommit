@@ -121,8 +121,7 @@ object GitRunner {
         project: Project,
         files: List<String>,
         message: String,
-        dateTime: LocalDateTime,
-        push: Boolean
+        dateTime: LocalDateTime
     ) {
         val root = project.basePath ?: return
 
@@ -131,11 +130,15 @@ object GitRunner {
             .toOffsetDateTime()
             .toString()
 
-        // Stage selected files only
-        files.forEach {
-            run(root, listOf("git", "add", it))
-        }
+        // stage selected files
+        files.forEach { absolutePath ->
+            val relativePath = File(root).toPath()
+                .relativize(File(absolutePath).toPath())
+                .toString()
 
+            run(root, listOf("git", "add", relativePath))
+        }
+        // commit
         run(
             root,
             listOf("git", "commit", "-m", message),
@@ -144,11 +147,14 @@ object GitRunner {
                 "GIT_COMMITTER_DATE" to formattedDate
             )
         )
-
-        if (push) {
-            run(root, listOf("git", "push"))
-        }
     }
+
+    fun push(project: Project) {
+        val root = project.basePath ?: return
+        run(root, listOf("git", "push"))
+    }
+
+
 
     // ---------------- INTERNAL ----------------
 
