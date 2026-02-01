@@ -1,13 +1,19 @@
-<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <!-- Unique identifier of the plugin. It should be FQN. It cannot be changed between the plugin versions. -->
-    <id>com.example.SmartGitCommit</id>
+    <id>com.roaa.SmartGitCommit</id>
+    <name>Smart Git Commit</name>
+    <vendor email="satpute.abhi22@gmail.com">Abhishek Satpute</vendor>
 
-    <!-- Public plugin name should be written in Title Case.
-         Guidelines: https://plugins.jetbrains.com/docs/marketplace/best-practices-for-listing.html#plugin-name -->
-    <name>SmartGitCommit</name>
-    <vendor email="afda">Hello</vendor>
-
+    <description><![CDATA[
+      <h2>Smart Git Commit & History Manager</h2>
+      <p>Enhance your Git workflow with a streamlined commit and history interface.</p>
+      <ul>
+        <li><b>Smart Commit:</b> Batch commit tracked and untracked changes with custom dates.</li>
+        <li><b>Integrated History:</b> View your repository history with a clean, toggleable daily view.</li>
+        <li><b>One-Click Push:</b> Quickly jump to the Push dialog directly from your commit history.</li>
+        <li><b>Modern UI:</b> Hover effects, rounded containers, and real-time resizable panels.</li>
+      </ul>
+      <p>Built for developers who want a faster, more visual way to manage their local repository.</p>
+    ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.vcs</depends>
@@ -18,7 +24,7 @@
         <toolWindow
                 id="Smart Git"
                 anchor="left"
-                factoryClass="com.example.smartgitcommit.SmartGitStartup"/>
+                icon="AllIcons.Actions.Lightning"
+                factoryClass="com.roaa.smartgitcommit.SmartGitStartup"/>
     </extensions>
-
 </idea-plugin>

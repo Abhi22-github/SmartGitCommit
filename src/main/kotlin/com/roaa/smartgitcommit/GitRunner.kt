@@ -1,4 +1,4 @@
-package com.example.smartgitcommit
+package com.roaa.smartgitcommit
 
 
 import com.intellij.openapi.project.Project
@@ -186,7 +186,7 @@ object GitRunner {
         val root = proj.basePath ?: return null
         return try {
             // %ct returns the committer date as a Unix timestamp
-            val timestampStr = GitRunner.runAndCapture(root, listOf("git", "log", "-1", "--format=%ct")).trim()
+            val timestampStr = runAndCapture(root, listOf("git", "log", "-1", "--format=%ct")).trim()
             if (timestampStr.isNotEmpty()) {
                 Date(timestampStr.toLong() * 1000)
             } else {

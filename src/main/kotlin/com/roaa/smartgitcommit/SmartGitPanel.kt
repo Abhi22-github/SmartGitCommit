@@ -1,4 +1,4 @@
-package com.example.smartgitcommit
+package com.roaa.smartgitcommit
 
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationGroupManager
@@ -12,6 +12,8 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
+import com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
@@ -31,20 +33,43 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
     private val placeholderText = "Commit Message"
     private var showEmptyDates = false
 
+    private val refreshButton = JButton(AllIcons.Actions.Refresh).apply {
+        isContentAreaFilled = false
+        isBorderPainted = false
+        toolTipText = "Refresh Changes"
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
+
     private val sectionsContainer = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         background = JBColor.background()
+    }
+
+    private val topWrapper = JPanel(BorderLayout()).apply {
+        background = JBColor.background()
+        add(sectionsContainer, BorderLayout.NORTH)
+    }
+
+    private val changesScroll = JScrollPane(topWrapper).apply {
+        border = JBUI.Borders.empty()
+        horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        viewport.background = JBColor.background()
     }
 
     private val dateSpinner = JSpinner(SpinnerDateModel())
     private val commitMessage = JTextArea(placeholderText)
 
     private val roundedCommitContainer = object : JPanel(BorderLayout()) {
-        init { isOpaque = false; border = JBUI.Borders.empty(8) }
+        init {
+            isOpaque = false
+            border = JBUI.Borders.empty(8)
+        }
+
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g2.color = EditorColorsManager.getInstance().globalScheme.defaultBackground
+            val bg = EditorColorsManager.getInstance().globalScheme.defaultBackground
+            g2.color = bg
             g2.fillRoundRect(8, 8, width - 16, height - 16, 12, 12)
             g2.color = JBColor.border()
             g2.drawRoundRect(8, 8, width - 16, height - 16, 12, 12)
@@ -108,8 +133,18 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
             updateToggleLook()
 
             add(toggleEmptyBtn)
-            add(createToolbarButton(AllIcons.Actions.Expandall, "Expand All") { historySections.forEach { it.toggle(true) } })
-            add(createToolbarButton(AllIcons.Actions.Collapseall, "Collapse All") { historySections.forEach { it.toggle(false) } })
+            add(
+                createToolbarButton(
+                    AllIcons.Actions.Expandall,
+                    "Expand All"
+                ) { historySections.forEach { it.toggle(true) } })
+            add(createToolbarButton(AllIcons.Actions.Collapseall, "Collapse All") {
+                historySections.forEach {
+                    it.toggle(
+                        false
+                    )
+                }
+            })
         }
 
         val scroll = JScrollPane(JPanel(BorderLayout()).apply {
@@ -133,7 +168,11 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         historyContainer.removeAll()
         historySections.clear()
 
-        val output = try { GitRunner.runAndCapture(root, listOf("git", "log", "--pretty=format:%s|%an|%ct")) } catch (e: Exception) { "" }
+        val output = try {
+            GitRunner.runAndCapture(root, listOf("git", "log", "--pretty=format:%s|%an|%ct"))
+        } catch (e: Exception) {
+            ""
+        }
         if (output.isBlank()) return
 
         val dateFmt = SimpleDateFormat("EEEE, d MMMM yyyy", Locale.ENGLISH)
@@ -144,8 +183,14 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
             val p = line.split("|")
             if (p.size >= 3) {
                 val date = Date(p[2].toLong() * 1000)
-                val cal = Calendar.getInstance().apply { time = date; set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
-                rawGroups.getOrPut(cal.timeInMillis) { mutableListOf() }.add(CommitData("", p[0], p[1], timeFmt.format(date)))
+                val cal = Calendar.getInstance().apply {
+                    time = date; set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(
+                    Calendar.SECOND,
+                    0
+                ); set(Calendar.MILLISECOND, 0)
+                }
+                rawGroups.getOrPut(cal.timeInMillis) { mutableListOf() }
+                    .add(CommitData("", p[0], p[1], timeFmt.format(date)))
             }
         }
 
@@ -182,28 +227,35 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
     }
 
     private inner class HistorySection(title: String) : JPanel(BorderLayout()) {
-        private val rows = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS); isOpaque = false; isVisible = false }
+        private val rows =
+            JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS); isOpaque = false; isVisible = false }
         private val arrow = JLabel(AllIcons.General.ArrowRight)
+
         init {
             isOpaque = false
             val header = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
                 isOpaque = false; cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                 add(arrow); add(JLabel("<html><b>$title</b></html>"))
-                addMouseListener(object : MouseAdapter() { override fun mouseClicked(e: MouseEvent) = toggle() })
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) = toggle()
+                })
             }
             add(header, BorderLayout.NORTH); add(rows, BorderLayout.CENTER)
         }
+
         fun toggle(exp: Boolean = !rows.isVisible) {
             rows.isVisible = exp; arrow.icon = if (exp) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
             revalidate(); repaint()
         }
+
         fun addRow(c: CommitData) = rows.add(object : JPanel(BorderLayout()) {
             init {
                 isOpaque = false // Transparent by default
                 border = JBUI.Borders.empty(2, 35, 2, 8)
                 cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) // Make it feel clickable
 
-                val text = "<html><span style='color: #6E6E6E;'>${c.time}</span> &nbsp;&nbsp; <span style='color: #3592FF;'>${c.message}</span></html>"
+                val text =
+                    "<html><span style='color: #6E6E6E;'>${c.time}</span> &nbsp;&nbsp; <span style='color: #3592FF;'>${c.message}</span></html>"
                 add(JLabel(text), BorderLayout.CENTER)
 
                 // The Hover Logic - Matching the Commit Tab style
@@ -213,10 +265,12 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                         background = Color(0xEDF6FF) // Same light blue highlight
                         repaint()
                     }
+
                     override fun mouseExited(e: MouseEvent) {
                         isOpaque = false
                         repaint()
                     }
+
                     override fun mousePressed(e: MouseEvent) {
                         // Future: Add logic to show commit details or diff
                         println("Clicked commit: ${c.message}")
@@ -230,7 +284,8 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
 
     private fun buildMainSplitPane(): JComponent {
         val header = JPanel(BorderLayout()).apply {
-            background = JBColor.background(); border = JBUI.Borders.empty(4, 8)
+            background = JBColor.background()
+            border = JBUI.Borders.empty(4, 8)
             add(masterCheckbox, BorderLayout.WEST)
             add(createToolbarButton(AllIcons.Actions.Refresh, "Refresh") { refreshChanges() }, BorderLayout.EAST)
         }
@@ -256,53 +311,63 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         return JSplitPane(JSplitPane.VERTICAL_SPLIT, topPanel, bottomPanel).apply {
             resizeWeight = 0.6
             dividerSize = 2
-            isContinuousLayout = true // ENABLE REAL-TIME RESIZING
+            isContinuousLayout = true
             border = JBUI.Borders.empty()
             ui = object : BasicSplitPaneUI() {
-                override fun createDefaultDivider() = object : BasicSplitPaneDivider(this) {
-                    override fun paint(g: Graphics) {
-                        g.color = JBColor.border(); g.fillRect(0, 0, width, height)
+                override fun createDefaultDivider(): BasicSplitPaneDivider =
+                    object : BasicSplitPaneDivider(this) {
+                        override fun paint(g: Graphics) {
+                            g.color = JBColor.border()
+                            g.fillRect(0, 0, width, height)
+                        }
                     }
-                }
             }
         }
     }
 
-    private fun buildBottomButtons(): JComponent = JPanel(FlowLayout(FlowLayout.LEFT, 8, 8)).apply {
-        background = JBColor.background(); add(commitButton); add(commitPushButton)
+    private fun buildBottomButtons(): JComponent = JPanel().apply {
+        layout = FlowLayout(FlowLayout.LEFT, 8, 8)
+        background = JBColor.background()
+        add(commitButton)
+        add(commitPushButton)
     }
 
     private fun refreshChanges() {
         val proj = project ?: return
         sectionsContainer.removeAll()
-        val root = proj.basePath ?: return
 
+        val root = proj.basePath ?: return
         val output = try {
             GitRunner.runAndCapture(root, listOf("git", "status", "--porcelain"))
-        } catch (e: Exception) { "" }
+        } catch (e: Exception) {
+            showNotification("Error", "Git status failed", NotificationType.ERROR)
+            ""
+        }
 
         val lines = output.lines().filter { it.isNotBlank() }
-        val tracked = lines.filter { !it.startsWith("??") }
-        val untracked = lines.filter { it.startsWith("??") }
+        val unversionedLines = lines.filter { it.startsWith("??") }
+        val trackedLines = lines.filter { !it.startsWith("??") }
 
-        if (tracked.isNotEmpty()) {
-            val sec = SectionPanel("Changes", tracked.size)
-            tracked.forEach { line ->
-                sec.addRow(createFileRow(File(root, line.substring(3).trim()).absolutePath, line.startsWith("D"), false))
+        if (trackedLines.isNotEmpty()) {
+            val section = SectionPanel("Changes", trackedLines.size)
+            trackedLines.forEach { line ->
+                val relativePath = line.substring(3).trim()
+                val absolutePath = File(root, relativePath).absolutePath
+                val isDeleted = line.startsWith(" D") || line.startsWith("D ")
+                section.addRow(createFileRow(absolutePath, isDeleted = isDeleted, isUnversioned = false))
             }
-            sectionsContainer.add(sec)
+            sectionsContainer.add(section)
         }
 
-        if (untracked.isNotEmpty()) {
-            val sec = SectionPanel("Unversioned Files", untracked.size)
-            untracked.forEach { line ->
-                sec.addRow(createFileRow(File(root, line.substring(3).trim()).absolutePath, false, true))
+        if (unversionedLines.isNotEmpty()) {
+            val section = SectionPanel("Unversioned Files", unversionedLines.size)
+            unversionedLines.forEach { line ->
+                val relativePath = line.substring(3).trim()
+                val absolutePath = File(root, relativePath).absolutePath
+                section.addRow(createFileRow(absolutePath, isDeleted = false, isUnversioned = true))
             }
-            sectionsContainer.add(sec)
+            sectionsContainer.add(section)
         }
-
-        // THE FIX: Add vertical glue so sections stay at the top
-        sectionsContainer.add(Box.createVerticalGlue())
 
         updateMasterFromLogic(lines.size)
         sectionsContainer.revalidate()
@@ -313,8 +378,11 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         val name = File(path).name
         val icon = FileTypeManager.getInstance().getFileTypeByFileName(name).icon ?: AllIcons.FileTypes.Unknown
         val row = RowPanel(path, icon)
-        val color = when { isUnversioned -> "#FF8C82"; isDeleted -> "#6E6E6E"; else -> "#3592FF" }
-        row.label.text = "<html><span style='color: $color;'>$name</span> &nbsp;&nbsp;<span style='color: #808080;'>$path</span></html>"
+        val color = when {
+            isUnversioned -> "#FF8C82"; isDeleted -> "#6E6E6E"; else -> "#3592FF"
+        }
+        row.label.text =
+            "<html><span style='color: $color;'>$name</span> &nbsp;&nbsp;<span style='color: #808080;'>$path</span></html>"
         return row
     }
 
@@ -331,7 +399,8 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                 addMouseListener(object : MouseAdapter() {
                     override fun mouseClicked(e: MouseEvent) {
                         rowsContainer.isVisible = !rowsContainer.isVisible
-                        arrow.icon = if (rowsContainer.isVisible) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
+                        arrow.icon =
+                            if (rowsContainer.isVisible) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
                         updateSize()
                     }
                 })
@@ -360,13 +429,22 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
     private inner class RowPanel(val filePath: String, icon: Icon) : JPanel(BorderLayout()) {
         val checkbox = JCheckBox().apply { isSelected = true; isOpaque = false; border = JBUI.Borders.emptyRight(4) }
         val label = JLabel().apply { isOpaque = false; this.icon = icon; iconTextGap = 6 }
+
         init {
             isOpaque = false; border = JBUI.Borders.empty(1, 32, 1, 8); maximumSize = Dimension(Int.MAX_VALUE, 26)
             add(checkbox, BorderLayout.WEST); add(label, BorderLayout.CENTER)
             addMouseListener(object : MouseAdapter() {
-                override fun mouseEntered(e: MouseEvent) { isOpaque = true; background = Color(0xEDF6FF); repaint() }
-                override fun mouseExited(e: MouseEvent) { isOpaque = false; repaint() }
-                override fun mousePressed(e: MouseEvent) { if (e.clickCount == 1) openFile(filePath) else if (e.clickCount == 2) openDiff(filePath) }
+                override fun mouseEntered(e: MouseEvent) {
+                    isOpaque = true; background = Color(0xEDF6FF); repaint()
+                }
+
+                override fun mouseExited(e: MouseEvent) {
+                    isOpaque = false; repaint()
+                }
+
+                override fun mousePressed(e: MouseEvent) {
+                    if (e.clickCount == 1) openFile(filePath) else if (e.clickCount == 2) openDiff(filePath)
+                }
             })
         }
     }
@@ -389,6 +467,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                     background = Color(0xEDF6FF) // Matches the Row hover color
                     repaint()
                 }
+
                 override fun mouseExited(e: MouseEvent) {
                     // Keep opaque if it's the toggle button and 'showEmptyDates' is active
                     if (tip == "Show/Hide Empty Days" && showEmptyDates) {
@@ -417,25 +496,107 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
     private fun setupCommitEditor() {
         val scheme = EditorColorsManager.getInstance().globalScheme
         commitMessage.apply {
-            lineWrap = true; wrapStyleWord = true; isOpaque = false; border = JBUI.Borders.empty(12, 16); foreground = JBColor.GRAY
+            lineWrap = true; wrapStyleWord = true; isOpaque = false; border = JBUI.Borders.empty(12, 16); foreground =
+            JBColor.GRAY
             font = scheme.getFont(null)
             addFocusListener(object : FocusListener {
-                override fun focusGained(e: FocusEvent) { if (text == placeholderText) { text = ""; foreground = scheme.defaultForeground } }
-                override fun focusLost(e: FocusEvent) { if (text.isEmpty()) { text = placeholderText; foreground = JBColor.GRAY } }
+                override fun focusGained(e: FocusEvent) {
+                    if (text == placeholderText) {
+                        text = ""; foreground = scheme.defaultForeground
+                    }
+                }
+
+                override fun focusLost(e: FocusEvent) {
+                    if (text.isEmpty()) {
+                        text = placeholderText; foreground = JBColor.GRAY
+                    }
+                }
             })
         }
     }
 
     private fun setupActions() {
-        masterCheckbox.addActionListener { if (!suppressMasterEvents) sectionsContainer.components.filterIsInstance<SectionPanel>().forEach { it.setAll(masterCheckbox.isSelected) } }
+        masterCheckbox.addActionListener {
+            if (!suppressMasterEvents) sectionsContainer.components.filterIsInstance<SectionPanel>()
+                .forEach { it.setAll(masterCheckbox.isSelected) }
+        }
         commitButton.addActionListener { doCommit(false) }; commitPushButton.addActionListener { doCommit(true) }
     }
 
-    private fun updateMasterFromLogic(total: Int) { suppressMasterEvents = true; masterCheckbox.text = "Changes $total files"; suppressMasterEvents = false }
-    private fun openFile(p: String) = LocalFileSystem.getInstance().findFileByPath(p)?.let { com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project!!).openFile(it, true) }
-    private fun openDiff(p: String) = LocalFileSystem.getInstance().findFileByPath(p)?.let { com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction.showDiffForChange(project!!, listOf(com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(project!!).getChange(it) ?: return Unit)) }
-    private fun registerVcsListener() { project?.let { com.intellij.openapi.vcs.changes.ChangeListManager.getInstance(it).addChangeListListener(object : com.intellij.openapi.vcs.changes.ChangeListListener { override fun changeListUpdateDone() { ApplicationManager.getApplication().invokeLater { refreshChanges() } } }, this) } }
-    private fun doCommit(push: Boolean) { /* commit logic */ }
+    private fun updateMasterFromLogic(total: Int) {
+        suppressMasterEvents = true; masterCheckbox.text = "Changes $total files"; suppressMasterEvents = false
+    }
+
+    private fun openFile(p: String) = LocalFileSystem.getInstance().findFileByPath(p)
+        ?.let { FileEditorManager.getInstance(project!!).openFile(it, true) }
+
+    private fun openDiff(p: String) = LocalFileSystem.getInstance().findFileByPath(p)?.let {
+        ShowDiffAction.showDiffForChange(
+            project!!,
+            listOf(
+                ChangeListManager.getInstance(project!!).getChange(it) ?: return Unit
+            )
+        )
+    }
+
+    private fun registerVcsListener() {
+        project?.let {
+            ChangeListManager.getInstance(it)
+                .addChangeListListener(object : ChangeListListener {
+                    override fun changeListUpdateDone() {
+                        ApplicationManager.getApplication().invokeLater { refreshChanges() }
+                    }
+                }, this)
+        }
+    }
+
+    private fun doCommit(push: Boolean) {
+        val msg = commitMessage.text.trim()
+        val proj = project ?: return
+
+        if (msg.isEmpty() || msg == placeholderText) {
+            showNotification("Commit Message Required", "Please enter a message.", NotificationType.WARNING)
+            return
+        }
+
+        val selectedPaths = sectionsContainer.components.filterIsInstance<SectionPanel>()
+            .flatMap { it.selectedFiles() }
+
+        if (selectedPaths.isEmpty()) {
+            showNotification("No Files Selected", "Select files to commit.", NotificationType.WARNING)
+            return
+        }
+
+        val spinnerDate = dateSpinner.value as Date
+        val localDateTime = spinnerDate.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime()
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                GitRunner.commitSelectedFiles(proj, selectedPaths, msg, localDateTime)
+                if (push) GitRunner.push(proj)
+
+                ApplicationManager.getApplication().invokeLater {
+                    commitMessage.text = placeholderText
+                    commitMessage.foreground = JBColor.GRAY
+                    VcsDirtyScopeManager.getInstance(proj).markEverythingDirty()
+                    refreshChanges()
+                    showNotification("Git Success", "Commit completed successfully.", NotificationType.INFORMATION)
+                }
+            } catch (e: Exception) {
+                ApplicationManager.getApplication().invokeLater {
+                    showNotification("Git Error", e.message ?: "Action failed", NotificationType.ERROR)
+                }
+            }
+        }
+    }
+
+    private fun showNotification(title: String, content: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("Smart Git Notifications")
+            .createNotification(title, content, type)
+            .notify(project)
+    }
+
     override fun dispose() {}
     data class CommitData(val hash: String, val message: String, val author: String, val time: String)
 }

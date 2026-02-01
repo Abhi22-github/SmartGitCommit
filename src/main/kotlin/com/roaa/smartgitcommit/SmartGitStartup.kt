@@ -1,11 +1,8 @@
-package com.example.smartgitcommit
+package com.roaa.smartgitcommit
 
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.openapi.wm.ToolWindow
-import com.intellij.openapi.wm.ToolWindowAnchor
 import com.intellij.openapi.wm.ToolWindowFactory
-import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.content.ContentFactory
 
 class SmartGitStartup : ToolWindowFactory {
