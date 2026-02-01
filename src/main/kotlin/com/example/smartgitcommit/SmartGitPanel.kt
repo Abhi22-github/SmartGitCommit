@@ -1,5 +1,6 @@
 package com.example.smartgitcommit
 
+import com.intellij.analysis.problemsView.toolWindow.ProblemsViewToolWindowUtils.addTab
 import com.intellij.diff.DiffDialogHints
 import com.intellij.diff.DiffManager
 import com.intellij.diff.DiffRequestFactory
@@ -19,6 +20,7 @@ import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vcs.changes.actions.diff.ChangeDiffRequestProducer
 import com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction
 import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import java.awt.*
 import java.awt.event.FocusEvent
@@ -26,6 +28,7 @@ import java.awt.event.FocusListener
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.io.File
+import java.text.SimpleDateFormat
 import java.time.ZoneId
 import java.util.*
 import javax.swing.*
@@ -87,14 +90,161 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
 
     init {
         background = JBColor.background()
-        add(buildMainSplitPane(), BorderLayout.CENTER)
-        add(buildBottomButtons(), BorderLayout.SOUTH)
 
+        val tabbedPane = JBTabbedPane().apply {
+            // Tab 1: Your existing Smart Commit UI
+            addTab("Commit", buildCommitTab())
+
+            // Tab 2: The new History Tab
+            addTab("History", buildHistoryTab())
+        }
+
+        add(tabbedPane, BorderLayout.CENTER)
+
+        // Setup initial states
         setupCommitEditor()
         setupActions()
         registerVcsListener()
         refreshChanges()
     }
+
+    /**
+     * Encapsulates your existing commit logic
+     */
+    private fun buildCommitTab(): JPanel {
+        val panel = JPanel(BorderLayout())
+        panel.add(buildMainSplitPane(), BorderLayout.CENTER)
+        panel.add(buildBottomButtons(), BorderLayout.SOUTH)
+        return panel
+    }
+
+
+
+    private fun buildHistoryTab(): JComponent {
+        val historyContainer = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            background = JBColor.background()
+        }
+
+        val scrollPane = JScrollPane(JPanel(BorderLayout()).apply {
+            add(historyContainer, BorderLayout.NORTH)
+            background = JBColor.background()
+        }).apply {
+            border = JBUI.Borders.empty()
+            viewport.background = JBColor.background()
+        }
+
+        // Refresh history when tab is selected or on startup
+        refreshHistory(historyContainer)
+
+        return scrollPane
+    }
+
+    private fun refreshHistory(container: JPanel) {
+        val root = project?.basePath ?: return
+        container.removeAll()
+
+        // Get git log data
+        val output = try {
+            GitRunner.runAndCapture(root, listOf("git", "log", "--pretty=format:%h|%s|%an|%ct"))
+        } catch (e: Exception) { "" }
+
+        val dateSectionFormat = SimpleDateFormat("EEEE, d MMMM yyyy", Locale.ENGLISH)
+        val timeFormat = SimpleDateFormat("h:mm a")
+
+        // 1. Group commits by the actual Date object (normalized to midnight)
+        // to ensure chronological sorting is easy.
+        val rawGroups = mutableMapOf<Long, MutableList<CommitData>>()
+
+        output.lines().filter { it.isNotBlank() }.forEach { line ->
+            val parts = line.split("|")
+            if (parts.size >= 4) {
+                val timestamp = parts[3].toLong() * 1000
+                val date = Date(timestamp)
+
+                // Normalize date to midnight for consistent grouping
+                val cal = Calendar.getInstance().apply {
+                    time = date
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val midnightTs = cal.timeInMillis
+
+                val commit = CommitData(parts[0], parts[1], parts[2], timeFormat.format(date))
+                rawGroups.getOrPut(midnightTs) { mutableListOf() }.add(commit)
+            }
+        }
+
+        // 2. Sort the keys (timestamps) in descending order (Newest First)
+        val sortedDates = rawGroups.keys.sortedDescending()
+
+        // 3. Build the UI in that specific order
+        sortedDates.forEach { timestamp ->
+            val dateStr = dateSectionFormat.format(Date(timestamp))
+            val commits = rawGroups[timestamp] ?: return@forEach
+
+            val section = HistorySection(dateStr)
+            // Sort individual commits within the day by time (newest first)
+            commits.forEach { commit ->
+                section.addRow(commit)
+            }
+            container.add(section)
+        }
+
+        container.revalidate()
+        container.repaint()
+    }
+
+    data class CommitData(val hash: String, val message: String, val author: String, val time: String)
+
+// --- History UI Components ---
+
+    private inner class HistorySection(title: String) : JPanel(BorderLayout()) {
+        private val rowsContainer = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
+        private var isExpanded = true
+        private val arrowLabel = JLabel(AllIcons.General.ArrowDown)
+
+        init {
+            isOpaque = false
+            val header = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
+                isOpaque = false
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                add(arrowLabel)
+                add(JLabel("<html><b>$title</b></html>"))
+
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        isExpanded = !isExpanded
+                        arrowLabel.icon = if (isExpanded) AllIcons.General.ArrowDown else AllIcons.General.ArrowRight
+                        rowsContainer.isVisible = isExpanded
+                        revalidate()
+                        repaint()
+                    }
+                })
+            }
+            add(header, BorderLayout.NORTH)
+            add(rowsContainer, BorderLayout.CENTER)
+        }
+
+        fun addRow(commit: CommitData) {
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(4, 32, 4, 8)
+                val text = "<html><span style='color: #6E6E6E;'>${commit.time}</span> &nbsp;&nbsp; " +
+                        "<b>${commit.message}</b> &nbsp;&nbsp; " +
+                        "<span style='color: #3592FF;'>[${commit.hash}]</span></html>"
+                add(JLabel(text), BorderLayout.CENTER)
+            }
+            rowsContainer.add(row)
+        }
+    }
+
+    // ... (Keep the rest of your existing methods: buildMainSplitPane, doCommit, etc.)
 
     private fun registerVcsListener() {
         val proj = project ?: return
