@@ -6,6 +6,8 @@ import kotlinx.html.emptyMap
 import java.io.File
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.Date
+
 object GitRunner {
 
     /**
@@ -177,6 +179,21 @@ object GitRunner {
 
         if (exitCode != 0) {
             throw Exception("Git Error: $output")
+        }
+    }
+
+    fun getLastCommitDate(proj: Project): Date? {
+        val root = proj.basePath ?: return null
+        return try {
+            // %ct returns the committer date as a Unix timestamp
+            val timestampStr = GitRunner.runAndCapture(root, listOf("git", "log", "-1", "--format=%ct")).trim()
+            if (timestampStr.isNotEmpty()) {
+                Date(timestampStr.toLong() * 1000)
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            null // Likely a fresh repo with no commits yet
         }
     }
 }
