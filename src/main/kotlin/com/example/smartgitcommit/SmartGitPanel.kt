@@ -110,6 +110,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
     override fun dispose() {}
 
     private fun buildMainSplitPane(): JComponent {
+        // --- TOP PANEL (Header + List + Date Picker) ---
         val header = JPanel(BorderLayout()).apply {
             background = JBColor.background()
             border = JBUI.Borders.empty(4, 8)
@@ -117,22 +118,28 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
             add(refreshButton, BorderLayout.EAST)
         }
 
+        // The new footer for the top panel containing the date picker
+        val topFooter = JPanel(FlowLayout(FlowLayout.LEFT, 12, 4)).apply {
+            background = JBColor.background()
+            // Add a subtle top border to separate it from the file list
+            border = JBUI.Borders.customLine(JBColor.border(), 1, 0, 0, 0)
+            add(JLabel("Change Date"))
+            dateSpinner.editor = JSpinner.DateEditor(dateSpinner, "dd/MM/yy, h:mm a")
+            add(dateSpinner)
+        }
+
         val topPanel = JPanel(BorderLayout()).apply {
             background = JBColor.background()
             add(header, BorderLayout.NORTH)
             add(changesScroll, BorderLayout.CENTER)
+            add(topFooter, BorderLayout.SOUTH) // Moved here from bottom panel
         }
 
+        // --- BOTTOM PANEL (Commit Message Only) ---
         val bottomPanel = JPanel(BorderLayout()).apply {
             background = JBColor.background()
-            val dateRow = JPanel(FlowLayout(FlowLayout.LEFT, 12, 4)).apply {
-                background = JBColor.background()
-                add(JLabel("Change Date"))
-                dateSpinner.editor = JSpinner.DateEditor(dateSpinner, "dd/MM/yy, h:mm a")
-                add(dateSpinner)
-            }
+            // Just the commit message container now
             roundedCommitContainer.add(commitMessage, BorderLayout.CENTER)
-            add(dateRow, BorderLayout.NORTH)
             add(roundedCommitContainer, BorderLayout.CENTER)
         }
 
@@ -246,20 +253,30 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
     private fun createFileRow(path: String, isDeleted: Boolean, isUnversioned: Boolean): RowPanel {
         val file = File(path)
         val name = file.name
-        val parentDir = file.parent ?: ""
+        val proj = project ?: return RowPanel(path, AllIcons.FileTypes.Unknown)
+
+        // Calculate the relative path from project root
+        val rootPath = proj.basePath ?: ""
+        val relativePath = if (path.startsWith(rootPath)) {
+            path.removePrefix(rootPath).removePrefix(File.separator).removeSuffix(name)
+        } else {
+            file.parent ?: ""
+        }
 
         val fileTypeIcon = FileTypeManager.getInstance().getFileTypeByFileName(name).icon
         val row = RowPanel(path, fileTypeIcon ?: AllIcons.FileTypes.Unknown)
         row.checkbox.isSelected = true
 
+        // Choose color based on status
         val statusColor = when {
-            isUnversioned -> "#FF8C82"
-            isDeleted -> "#6E6E6E"
-            else -> "#3592FF"
+            isUnversioned -> "#FF8C82" // Red-ish for New
+            isDeleted -> "#6E6E6E"     // Gray for Deleted
+            else -> "#3592FF"          // Blue for Modified
         }
 
+        // Format: FileName   relative/path/
         row.label.text = "<html><nobr><span style='color: $statusColor;'>$name</span>" +
-                "<span style='color: #808080;'>&nbsp;&nbsp;$parentDir</span></nobr></html>"
+                "&nbsp;&nbsp;<span style='color: #808080;'>$relativePath</span></nobr></html>"
 
         row.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
