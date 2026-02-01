@@ -12,6 +12,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
+import com.intellij.openapi.vcs.changes.InvokeAfterUpdateMode
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction
 import com.intellij.ui.JBColor
@@ -101,6 +102,30 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         refreshChanges()
     }
 
+    private fun registerVcsListener() {
+        val connection = project?.messageBus?.connect(this)
+
+        // Listen for VCS (Git) internal changes
+        project?.let {
+            ChangeListManager.getInstance(it).addChangeListListener(object : ChangeListListener {
+                override fun changeListUpdateDone() {
+                    ApplicationManager.getApplication().invokeLater {
+                        refreshChanges()
+                    }
+                }
+            }, this)
+        }
+
+        // NEW: Listen for actual file saves on disk
+        connection?.subscribe(com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES, object : com.intellij.openapi.vfs.newvfs.BulkFileListener {
+            override fun after(events: List<com.intellij.openapi.vfs.newvfs.events.VFileEvent>) {
+                // A slight delay ensures the file is fully unlocked by the OS before Git reads it
+                ApplicationManager.getApplication().invokeLater {
+                    refreshChanges()
+                }
+            }
+        })
+    }
     // ================= TAB BUILDERS =================
 
     private fun buildCommitTab(): JPanel = JPanel(BorderLayout()).apply {
@@ -235,7 +260,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
             isOpaque = false
             val header = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
                 isOpaque = false; cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                add(arrow); add(JLabel("<html><b>$title</b></html>"))
+                add(arrow); add(JLabel("<html>$title</html>"))
                 addMouseListener(object : MouseAdapter() {
                     override fun mouseClicked(e: MouseEvent) = toggle()
                 })
@@ -305,7 +330,8 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                 add(dateSpinner)
             }
             roundedCommitContainer.add(commitMessage, BorderLayout.CENTER)
-            add(dateRow, BorderLayout.NORTH); add(roundedCommitContainer, BorderLayout.CENTER)
+            add(dateRow, BorderLayout.NORTH)
+            add(roundedCommitContainer, BorderLayout.CENTER)
         }
 
         return JSplitPane(JSplitPane.VERTICAL_SPLIT, topPanel, bottomPanel).apply {
@@ -332,19 +358,9 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         add(commitPushButton)
     }
 
-    private fun refreshChanges() {
-        val proj = project ?: return
+    private fun renderChangesList(lines: List<String>, root: String) {
         sectionsContainer.removeAll()
 
-        val root = proj.basePath ?: return
-        val output = try {
-            GitRunner.runAndCapture(root, listOf("git", "status", "--porcelain"))
-        } catch (e: Exception) {
-            showNotification("Error", "Git status failed", NotificationType.ERROR)
-            ""
-        }
-
-        val lines = output.lines().filter { it.isNotBlank() }
         val unversionedLines = lines.filter { it.startsWith("??") }
         val trackedLines = lines.filter { !it.startsWith("??") }
 
@@ -354,7 +370,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                 val relativePath = line.substring(3).trim()
                 val absolutePath = File(root, relativePath).absolutePath
                 val isDeleted = line.startsWith(" D") || line.startsWith("D ")
-                section.addRow(createFileRow(absolutePath, isDeleted = isDeleted, isUnversioned = false))
+                section.addRow(createFileRow(absolutePath, isDeleted, false))
             }
             sectionsContainer.add(section)
         }
@@ -362,17 +378,76 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         if (unversionedLines.isNotEmpty()) {
             val section = SectionPanel("Unversioned Files", unversionedLines.size)
             unversionedLines.forEach { line ->
-                val relativePath = line.substring(3).trim()
-                val absolutePath = File(root, relativePath).absolutePath
-                section.addRow(createFileRow(absolutePath, isDeleted = false, isUnversioned = true))
+                val absolutePath = File(root, line.substring(3).trim()).absolutePath
+                section.addRow(createFileRow(absolutePath, false, true))
             }
             sectionsContainer.add(section)
         }
 
+        sectionsContainer.add(Box.createVerticalGlue())
         updateMasterFromLogic(lines.size)
         sectionsContainer.revalidate()
         sectionsContainer.repaint()
     }
+
+    private fun refreshChanges() {
+        val proj = project ?: return
+        val root = proj.basePath ?: return
+
+        // FORCE: Tell the IDE to look at the disk right now
+        val virtualRoot = LocalFileSystem.getInstance().findFileByPath(root)
+        if (virtualRoot != null) {
+            // 'false' means synchronous (wait for it), 'true' means recursive
+            com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, virtualRoot)
+        }
+
+        // Now tell the VCS (Git) that its cache is invalid
+        VcsDirtyScopeManager.getInstance(proj).markEverythingDirty()
+        // Run Git in background so UI stays smooth
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val output = try {
+                GitRunner.runAndCapture(root, listOf("git", "status", "--porcelain"))
+            } catch (e: Exception) { "" }
+
+            val lines = output.lines().filter { it.isNotBlank() }
+
+            // Switch back to UI thread ONLY to draw the list
+            ApplicationManager.getApplication().invokeLater {
+                if (proj.isDisposed) return@invokeLater
+
+                sectionsContainer.removeAll()
+
+                val unversionedLines = lines.filter { it.startsWith("??") }
+                val trackedLines = lines.filter { !it.startsWith("??") }
+
+                if (trackedLines.isNotEmpty()) {
+                    val section = SectionPanel("Changes", trackedLines.size)
+                    trackedLines.forEach { line ->
+                        val relativePath = line.substring(3).trim()
+                        val absolutePath = File(root, relativePath).absolutePath
+                        val isDeleted = line.startsWith(" D") || line.startsWith("D ")
+                        section.addRow(createFileRow(absolutePath, isDeleted, false))
+                    }
+                    sectionsContainer.add(section)
+                }
+
+                if (unversionedLines.isNotEmpty()) {
+                    val section = SectionPanel("Unversioned Files", unversionedLines.size)
+                    unversionedLines.forEach { line ->
+                        val relativePath = line.substring(3).trim()
+                        val absolutePath = File(root, relativePath).absolutePath
+                        section.addRow(createFileRow(absolutePath, isDeleted = false, isUnversioned = true))
+                    }
+                    sectionsContainer.add(section)
+                }
+
+                updateMasterFromLogic(lines.size)
+                sectionsContainer.revalidate()
+                sectionsContainer.repaint()
+            }
+        }
+    }
+
 
     private fun createFileRow(path: String, isDeleted: Boolean, isUnversioned: Boolean): RowPanel {
         val name = File(path).name
@@ -520,7 +595,9 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
             if (!suppressMasterEvents) sectionsContainer.components.filterIsInstance<SectionPanel>()
                 .forEach { it.setAll(masterCheckbox.isSelected) }
         }
-        commitButton.addActionListener { doCommit(false) }; commitPushButton.addActionListener { doCommit(true) }
+        refreshButton.addActionListener { refreshChanges() }
+        commitButton.addActionListener { doCommit(false) };
+        commitPushButton.addActionListener { doCommit(true) }
     }
 
     private fun updateMasterFromLogic(total: Int) {
@@ -537,17 +614,6 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                 ChangeListManager.getInstance(project!!).getChange(it) ?: return Unit
             )
         )
-    }
-
-    private fun registerVcsListener() {
-        project?.let {
-            ChangeListManager.getInstance(it)
-                .addChangeListListener(object : ChangeListListener {
-                    override fun changeListUpdateDone() {
-                        ApplicationManager.getApplication().invokeLater { refreshChanges() }
-                    }
-                }, this)
-        }
     }
 
     private fun doCommit(push: Boolean) {
