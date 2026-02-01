@@ -12,7 +12,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vcs.changes.ChangeListListener
 import com.intellij.openapi.vcs.changes.ChangeListManager
-import com.intellij.openapi.vcs.changes.InvokeAfterUpdateMode
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vcs.changes.actions.diff.ShowDiffAction
 import com.intellij.ui.JBColor
@@ -65,7 +64,6 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
             isOpaque = false
             border = JBUI.Borders.empty(8)
         }
-
         override fun paintComponent(g: Graphics) {
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -87,6 +85,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         background = JBColor.background()
     }
     private val historySections = mutableListOf<HistorySection>()
+    private val deselectedFiles = mutableSetOf<String>()
 
     init {
         background = JBColor.background()
@@ -358,52 +357,30 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         add(commitPushButton)
     }
 
-    private fun renderChangesList(lines: List<String>, root: String) {
-        sectionsContainer.removeAll()
-
-        val unversionedLines = lines.filter { it.startsWith("??") }
-        val trackedLines = lines.filter { !it.startsWith("??") }
-
-        if (trackedLines.isNotEmpty()) {
-            val section = SectionPanel("Changes", trackedLines.size)
-            trackedLines.forEach { line ->
-                val relativePath = line.substring(3).trim()
-                val absolutePath = File(root, relativePath).absolutePath
-                val isDeleted = line.startsWith(" D") || line.startsWith("D ")
-                section.addRow(createFileRow(absolutePath, isDeleted, false))
-            }
-            sectionsContainer.add(section)
-        }
-
-        if (unversionedLines.isNotEmpty()) {
-            val section = SectionPanel("Unversioned Files", unversionedLines.size)
-            unversionedLines.forEach { line ->
-                val absolutePath = File(root, line.substring(3).trim()).absolutePath
-                section.addRow(createFileRow(absolutePath, false, true))
-            }
-            sectionsContainer.add(section)
-        }
-
-        sectionsContainer.add(Box.createVerticalGlue())
-        updateMasterFromLogic(lines.size)
-        sectionsContainer.revalidate()
-        sectionsContainer.repaint()
-    }
 
     private fun refreshChanges() {
         val proj = project ?: return
         val root = proj.basePath ?: return
 
-        // FORCE: Tell the IDE to look at the disk right now
-        val virtualRoot = LocalFileSystem.getInstance().findFileByPath(root)
-        if (virtualRoot != null) {
-            // 'false' means synchronous (wait for it), 'true' means recursive
-            com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, virtualRoot)
+        // 1. SAVE CURRENT STATES: Capture what is currently UNCHECKED
+        sectionsContainer.components.filterIsInstance<SectionPanel>().forEach { section ->
+            section.getRows().forEach { row ->
+                if (!row.checkbox.isSelected) {
+                    deselectedFiles.add(row.filePath)
+                } else {
+                    deselectedFiles.remove(row.filePath)
+                }
+            }
         }
 
-        // Now tell the VCS (Git) that its cache is invalid
+        // 2. FORCE SYNC: Tell IDE to check disk
+        val virtualRoot = LocalFileSystem.getInstance().findFileByPath(root)
+        if (virtualRoot != null) {
+            com.intellij.openapi.vfs.VfsUtil.markDirtyAndRefresh(false, true, true, virtualRoot)
+        }
         VcsDirtyScopeManager.getInstance(proj).markEverythingDirty()
-        // Run Git in background so UI stays smooth
+
+        // 3. BACKGROUND FETCH
         ApplicationManager.getApplication().executeOnPooledThread {
             val output = try {
                 GitRunner.runAndCapture(root, listOf("git", "status", "--porcelain"))
@@ -411,7 +388,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
 
             val lines = output.lines().filter { it.isNotBlank() }
 
-            // Switch back to UI thread ONLY to draw the list
+            // 4. UI UPDATE
             ApplicationManager.getApplication().invokeLater {
                 if (proj.isDisposed) return@invokeLater
 
@@ -420,23 +397,49 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
                 val unversionedLines = lines.filter { it.startsWith("??") }
                 val trackedLines = lines.filter { !it.startsWith("??") }
 
+                // Render Tracked Changes
                 if (trackedLines.isNotEmpty()) {
                     val section = SectionPanel("Changes", trackedLines.size)
                     trackedLines.forEach { line ->
                         val relativePath = line.substring(3).trim()
                         val absolutePath = File(root, relativePath).absolutePath
                         val isDeleted = line.startsWith(" D") || line.startsWith("D ")
-                        section.addRow(createFileRow(absolutePath, isDeleted, false))
+
+                        val row = createFileRow(absolutePath, isDeleted, false)
+
+                        // RESTORE STATE
+                        row.checkbox.isSelected = !deselectedFiles.contains(absolutePath)
+
+                        // LISTEN FOR MANUAL CHANGES
+                        row.checkbox.addActionListener {
+                            if (row.checkbox.isSelected) deselectedFiles.remove(absolutePath)
+                            else deselectedFiles.add(absolutePath)
+                        }
+
+                        section.addRow(row)
                     }
                     sectionsContainer.add(section)
                 }
 
+                // Render Unversioned Files
                 if (unversionedLines.isNotEmpty()) {
                     val section = SectionPanel("Unversioned Files", unversionedLines.size)
                     unversionedLines.forEach { line ->
                         val relativePath = line.substring(3).trim()
                         val absolutePath = File(root, relativePath).absolutePath
-                        section.addRow(createFileRow(absolutePath, isDeleted = false, isUnversioned = true))
+
+                        val row = createFileRow(absolutePath, false, true)
+
+                        // RESTORE STATE
+                        row.checkbox.isSelected = !deselectedFiles.contains(absolutePath)
+
+                        // LISTEN FOR MANUAL CHANGES
+                        row.checkbox.addActionListener {
+                            if (row.checkbox.isSelected) deselectedFiles.remove(absolutePath)
+                            else deselectedFiles.add(absolutePath)
+                        }
+
+                        section.addRow(row)
                     }
                     sectionsContainer.add(section)
                 }
@@ -499,6 +502,7 @@ class SmartGitPanel(private val project: Project?) : JPanel(BorderLayout()), Dis
         fun setAll(s: Boolean) = rows.forEach { it.checkbox.isSelected = s }
         fun summary() = rows.all { it.checkbox.isSelected } to rows.any { it.checkbox.isSelected }
         fun selectedFiles() = rows.filter { it.checkbox.isSelected }.map { it.filePath }
+        fun getRows(): List<RowPanel> = rows
     }
 
     private inner class RowPanel(val filePath: String, icon: Icon) : JPanel(BorderLayout()) {
